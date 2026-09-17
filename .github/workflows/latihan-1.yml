@@ -9,5 +9,7 @@ jobs:
       run: sudo apt update -y
     - name: instal nginx
       run: sudo apt install nginx -y
+    - name: run & enable nginx
+      run: sudo systemctl start nginx && sudo systemctl enable nginx
     - name: Rtes landing page nginx
       run: curl localhost
