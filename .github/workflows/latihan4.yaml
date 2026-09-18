@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       nama_siswa:
-        description: 'Tulis nama kamu'
+        description: 'Antek antek asing'
         required: true
         default: 'antek antek asing'
 
