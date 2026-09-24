@@ -1,6 +1,5 @@
 name: "Skenario 1 - Level 2 - Deploy Node.js (systemd)"
 
-# Trigger: push otomatis ATAU dijalankan manual
 on:
   push:
     branches: [ main ]
@@ -23,18 +22,19 @@ jobs:
     steps:
 
       # ==========================================
-      # 1. Checkout repository
+      # 1. Checkout
       # ==========================================
       - name: Checkout kode
         uses: actions/checkout@v4
 
 
       # ==========================================
-      # 2. Install cloudflared + sshpass
+      # 2. Install cloudflared & sshpass
       # ==========================================
       - name: Install cloudflared & sshpass
         run: |
-          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
+          curl -L \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
             -o cloudflared.deb
 
           sudo dpkg -i cloudflared.deb
@@ -44,7 +44,7 @@ jobs:
 
 
       # ==========================================
-      # 3. Konfigurasi SSH melalui Cloudflare
+      # 3. SSH Config via Cloudflare Tunnel
       # ==========================================
       - name: Siapkan SSH config
         env:
@@ -64,7 +64,8 @@ jobs:
 
 
       # ==========================================
-      # 4. Bootstrap Node.js + deploy aplikasi
+      # 4. Deploy aplikasi
+      #    Install Node.js jika belum ada
       # ==========================================
       - name: Deploy aplikasi
         if: ${{ github.event.inputs.restart_only != 'true' }}
@@ -74,13 +75,13 @@ jobs:
 
         run: |
 
-          echo "=== Cek Node.js di WSL ==="
+          echo "=== Cek Node.js ==="
 
           sshpass -e ssh vm-a "
             if ! command -v node >/dev/null 2>&1; then
 
-              echo 'Node.js belum tersedia.'
-              echo 'Installing Node.js...'
+              echo 'Node.js belum ada.'
+              echo 'Installing Node.js 22...'
 
               curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
               sudo apt-get install -y nodejs
@@ -108,21 +109,37 @@ jobs:
             vm-a:/tmp/
 
 
-          echo "=== Install aplikasi ==="
+          echo "=== Install dependency ==="
 
           sshpass -e ssh vm-a "
             sudo cp /tmp/server.js /opt/level2-node/server.js &&
             sudo cp /tmp/package.json /opt/level2-node/package.json &&
             sudo chown -R fendy:fendy /opt/level2-node &&
-
             cd /opt/level2-node &&
-
             npm install --omit=dev
           "
 
 
       # ==========================================
-      # 5. Buat / update systemd service
+      # 5. Upload systemd service
+      # ==========================================
+      - name: Upload systemd service
+        if: ${{ github.event.inputs.restart_only != 'true' }}
+
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+
+        run: |
+
+          echo "=== Upload systemd service ==="
+
+          sshpass -e scp -o StrictHostKeyChecking=no \
+            skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/level2-node.service \
+            vm-a:/tmp/level2-node.service
+
+
+      # ==========================================
+      # 6. Install / update systemd
       # ==========================================
       - name: Setup systemd service
         if: ${{ github.event.inputs.restart_only != 'true' }}
@@ -133,33 +150,14 @@ jobs:
         run: |
 
           sshpass -e ssh vm-a "
-            sudo tee /etc/systemd/system/level2-node.service > /dev/null <<'EOF'
-
-          [Unit]
-          Description=Level 2 Node.js Application
-          After=network.target
-
-          [Service]
-          Type=simple
-          User=fendy
-          WorkingDirectory=/opt/level2-node
-          ExecStart=/usr/bin/node /opt/level2-node/server.js
-          Restart=always
-          RestartSec=5
-          Environment=NODE_ENV=production
-
-          [Install]
-          WantedBy=multi-user.target
-
-          EOF
-
+            sudo mv /tmp/level2-node.service /etc/systemd/system/level2-node.service &&
             sudo systemctl daemon-reload &&
             sudo systemctl enable level2-node
           "
 
 
       # ==========================================
-      # 6. Restart aplikasi
+      # 7. Restart aplikasi
       # ==========================================
       - name: Restart systemd service level2-node
         if: ${{ github.event.inputs.restart_only != 'true' }}
@@ -177,7 +175,7 @@ jobs:
 
 
       # ==========================================
-      # 7. Mode restart_only
+      # 8. Manual restart only
       # ==========================================
       - name: Restart saja
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.restart_only == 'true' }}
