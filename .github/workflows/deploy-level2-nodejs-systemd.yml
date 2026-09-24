@@ -1,11 +1,12 @@
 name: "Skenario 1 - Level 2 - Deploy Node.js (systemd)"
 
-# Trigger: push otomatis ATAU dijalankan manual (workflow_dispatch) dengan input
+# Trigger: push otomatis ATAU dijalankan manual
 on:
   push:
     branches: [ main ]
     paths:
       - 'skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/**'
+
   workflow_dispatch:
     inputs:
       restart_only:
@@ -16,45 +17,178 @@ on:
 
 jobs:
   deploy:
-    name: Deploy Node.js app ke VM-A
+    name: Deploy Node.js app ke WSL
     runs-on: ubuntu-latest
+
     steps:
+
+      # ==========================================
+      # 1. Checkout repository
+      # ==========================================
       - name: Checkout kode
         uses: actions/checkout@v4
 
+
+      # ==========================================
+      # 2. Install cloudflared + sshpass
+      # ==========================================
       - name: Install cloudflared & sshpass
         run: |
-          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
-          sudo dpkg -i cloudflared.deb
-          sudo apt-get update -y && sudo apt-get install -y sshpass
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
+            -o cloudflared.deb
 
-      - name: Siapkan SSH config (ProxyCommand Cloudflare Access, tanpa SSH key)
+          sudo dpkg -i cloudflared.deb
+
+          sudo apt-get update -y
+          sudo apt-get install -y sshpass
+
+
+      # ==========================================
+      # 3. Konfigurasi SSH melalui Cloudflare
+      # ==========================================
+      - name: Siapkan SSH config
         env:
           CF_ACCESS_HOSTNAME: ${{ secrets.CF_ACCESS_HOSTNAME }}
+
         run: |
           mkdir -p ~/.ssh
+
           cat >> ~/.ssh/config <<EOC
           Host vm-a
             HostName ${CF_ACCESS_HOSTNAME}
             User ${{ secrets.VPS_USERNAME }}
             ProxyCommand cloudflared access ssh --hostname %h
             StrictHostKeyChecking no
-            UserKnownHostsFile=/dev/null
+            UserKnownHostsFile /dev/null
           EOC
 
-      - name: Upload file aplikasi (skip jika restart_only = true)
+
+      # ==========================================
+      # 4. Bootstrap Node.js + deploy aplikasi
+      # ==========================================
+      - name: Deploy aplikasi
         if: ${{ github.event.inputs.restart_only != 'true' }}
+
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
+
         run: |
-          ssh vm-a "sudo mkdir -p /opt/level2-node && sudo chown \$USER:\$USER /opt/level2-node"
+
+          echo "=== Cek Node.js di WSL ==="
+
+          sshpass -e ssh vm-a "
+            if ! command -v node >/dev/null 2>&1; then
+
+              echo 'Node.js belum tersedia.'
+              echo 'Installing Node.js...'
+
+              curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+              sudo apt-get install -y nodejs
+
+            else
+
+              echo 'Node.js sudah tersedia.'
+              node --version
+
+            fi
+          "
+
+
+          echo "=== Buat directory aplikasi ==="
+
+          sshpass -e ssh vm-a \
+            "sudo mkdir -p /opt/level2-node"
+
+
+          echo "=== Upload aplikasi ==="
+
           sshpass -e scp -o StrictHostKeyChecking=no \
             skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/server.js \
             skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/package.json \
-            vm-a:/opt/level2-node/
+            vm-a:/tmp/
 
-      - name: Restart systemd service level2-node
+
+          echo "=== Install aplikasi ==="
+
+          sshpass -e ssh vm-a "
+            sudo cp /tmp/server.js /opt/level2-node/server.js &&
+            sudo cp /tmp/package.json /opt/level2-node/package.json &&
+            sudo chown -R fendy:fendy /opt/level2-node &&
+
+            cd /opt/level2-node &&
+
+            npm install --omit=dev
+          "
+
+
+      # ==========================================
+      # 5. Buat / update systemd service
+      # ==========================================
+      - name: Setup systemd service
+        if: ${{ github.event.inputs.restart_only != 'true' }}
+
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
+
         run: |
-          sshpass -e ssh vm-a "sudo systemctl restart level2-node && sudo systemctl status level2-node --no-pager"
+
+          sshpass -e ssh vm-a "
+            sudo tee /etc/systemd/system/level2-node.service > /dev/null <<'EOF'
+
+          [Unit]
+          Description=Level 2 Node.js Application
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=fendy
+          WorkingDirectory=/opt/level2-node
+          ExecStart=/usr/bin/node /opt/level2-node/server.js
+          Restart=always
+          RestartSec=5
+          Environment=NODE_ENV=production
+
+          [Install]
+          WantedBy=multi-user.target
+
+          EOF
+
+            sudo systemctl daemon-reload &&
+            sudo systemctl enable level2-node
+          "
+
+
+      # ==========================================
+      # 6. Restart aplikasi
+      # ==========================================
+      - name: Restart systemd service level2-node
+        if: ${{ github.event.inputs.restart_only != 'true' }}
+
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+
+        run: |
+
+          sshpass -e ssh vm-a \
+            "sudo systemctl restart level2-node"
+
+          sshpass -e ssh vm-a \
+            "sudo systemctl status level2-node --no-pager"
+
+
+      # ==========================================
+      # 7. Mode restart_only
+      # ==========================================
+      - name: Restart saja
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.restart_only == 'true' }}
+
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+
+        run: |
+
+          sshpass -e ssh vm-a \
+            "sudo systemctl restart level2-node"
+
+          sshpass -e ssh vm-a \
+            "sudo systemctl status level2-node --no-pager"
