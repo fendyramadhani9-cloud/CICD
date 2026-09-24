@@ -21,16 +21,9 @@ jobs:
 
     steps:
 
-      # ==========================================
-      # 1. Checkout
-      # ==========================================
       - name: Checkout kode
         uses: actions/checkout@v4
 
-
-      # ==========================================
-      # 2. Install cloudflared & sshpass
-      # ==========================================
       - name: Install cloudflared & sshpass
         run: |
           curl -L \
@@ -42,14 +35,9 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y sshpass
 
-
-      # ==========================================
-      # 3. SSH Config via Cloudflare Tunnel
-      # ==========================================
       - name: Siapkan SSH config
         env:
           CF_ACCESS_HOSTNAME: ${{ secrets.CF_ACCESS_HOSTNAME }}
-
         run: |
           mkdir -p ~/.ssh
 
@@ -62,44 +50,22 @@ jobs:
             UserKnownHostsFile /dev/null
           EOC
 
-
-      # ==========================================
-      # 4. Deploy aplikasi
-      #    Install Node.js jika belum ada
-      # ==========================================
       - name: Deploy aplikasi
         if: ${{ github.event.inputs.restart_only != 'true' }}
-
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
-
         run: |
 
           echo "=== Cek Node.js ==="
 
           sshpass -e ssh vm-a "
-            if ! command -v node >/dev/null 2>&1; then
-
-              echo 'Node.js belum ada.'
-              echo 'Installing Node.js 22...'
-
-              curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-              sudo apt-get install -y nodejs
-
-            else
-
-              echo 'Node.js sudah tersedia.'
-              node --version
-
-            fi
+            node --version
           "
-
 
           echo "=== Buat directory aplikasi ==="
 
           sshpass -e ssh vm-a \
             "sudo mkdir -p /opt/level2-node"
-
 
           echo "=== Upload aplikasi ==="
 
@@ -108,8 +74,7 @@ jobs:
             skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/package.json \
             vm-a:/tmp/
 
-
-          echo "=== Install dependency ==="
+          echo "=== Pasang aplikasi ==="
 
           sshpass -e ssh vm-a "
             sudo cp /tmp/server.js /opt/level2-node/server.js &&
@@ -119,74 +84,17 @@ jobs:
             npm install --omit=dev
           "
 
-
-      # ==========================================
-      # 5. Upload systemd service
-      # ==========================================
-      - name: Upload systemd service
-        if: ${{ github.event.inputs.restart_only != 'true' }}
-
+      - name: Restart Node.js service
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
-
         run: |
 
-          echo "=== Upload systemd service ==="
-
-          sshpass -e scp -o StrictHostKeyChecking=no \
-            skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/level2-node.service \
-            vm-a:/tmp/level2-node.service
-
-
-      # ==========================================
-      # 6. Install / update systemd
-      # ==========================================
-      - name: Setup systemd service
-        if: ${{ github.event.inputs.restart_only != 'true' }}
-
-        env:
-          SSHPASS: ${{ secrets.VPS_PASSWORD }}
-
-        run: |
-
-          sshpass -e ssh vm-a "
-            sudo mv /tmp/level2-node.service /etc/systemd/system/level2-node.service &&
-            sudo systemctl daemon-reload &&
-            sudo systemctl enable level2-node
-          "
-
-
-      # ==========================================
-      # 7. Restart aplikasi
-      # ==========================================
-      - name: Restart systemd service level2-node
-        if: ${{ github.event.inputs.restart_only != 'true' }}
-
-        env:
-          SSHPASS: ${{ secrets.VPS_PASSWORD }}
-
-        run: |
+          echo "=== Restart level2-node ==="
 
           sshpass -e ssh vm-a \
             "sudo systemctl restart level2-node"
 
-          sshpass -e ssh vm-a \
-            "sudo systemctl status level2-node --no-pager"
-
-
-      # ==========================================
-      # 8. Manual restart only
-      # ==========================================
-      - name: Restart saja
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.restart_only == 'true' }}
-
-        env:
-          SSHPASS: ${{ secrets.VPS_PASSWORD }}
-
-        run: |
-
-          sshpass -e ssh vm-a \
-            "sudo systemctl restart level2-node"
+          echo "=== Status service ==="
 
           sshpass -e ssh vm-a \
             "sudo systemctl status level2-node --no-pager"
