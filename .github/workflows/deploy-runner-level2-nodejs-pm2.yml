@@ -22,7 +22,7 @@ jobs:
 
       - name: Salin file aplikasi (lokal, tanpa SSH)
         run: |
-          mkdir -p /opt/level2-node-pm2
+          sudo mkdir -p /opt/level2-node-pm2
           cp skenario2-self-hosted-runner/level2-nodejs-pm2/app/server.js /opt/level2-node-pm2/
           cp skenario2-self-hosted-runner/level2-nodejs-pm2/app/package.json /opt/level2-node-pm2/
 
